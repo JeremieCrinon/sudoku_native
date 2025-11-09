@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, Default)]
-pub struct Grid { // The structure of the grid
+pub struct Grid {
+    // The structure of the grid
     cells: [[u8; 9]; 9], // We want an array containing 9 arrays containing 9 u8
 }
 
