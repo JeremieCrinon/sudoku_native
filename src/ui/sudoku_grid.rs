@@ -6,7 +6,9 @@ use iced::{
         text_input,
         Column
     },
-    Element
+    Element,
+    Pixels,
+    Alignment
 };
 
 #[derive(Default)]
@@ -63,13 +65,17 @@ impl SudokuGrid {
                             x, y, value: v,
                         }
                     })
+                    .width(75)
+                    .size(Pixels(55.0))
+                    .padding(0)
                     .into()
             });
 
             row(cells).into()
         });
 
-        column(rows).into()
+        column(rows)
+            .into()
 
     }
 
