@@ -1,15 +1,21 @@
 use crate::resolver::{Grid, fill_grid, solve_grid};
 use iced::{
     Element, Pixels,
-    widget::{Column, Container, Row, Text, button, column, container, row, text, text_input},
+    widget::{
+        Column, Container, ProgressBar, Row, Text, button, column, container, progress_bar, row,
+        scrollable, text, text_input,
+    },
 };
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 #[derive(Default)]
 pub struct SudokuGrid {
     value: Grid,
     error: Option<String>,
+    json_result: Option<String>,
+    json_progress: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -62,14 +68,15 @@ impl SudokuGrid {
                 self.value = Grid::new();
             }
             SudokuMessage::LoadJson => {
+                self.json_result = None; // Reset the json resolving results
+                self.json_progress = 0.0; // Set the progress bar back to 0
+
                 let file_path = FileDialog::new()
                     .add_filter("text", &["json"])
                     .set_directory("/")
                     .pick_file();
 
-                println!("Got the file");
-
-                // let start_total = Date::now(); // Get the current time (for calculating how much time it took)
+                let start_total = Instant::now(); // Get the current time (for calculating how much time it took)
 
                 let file_path = match file_path {
                     Some(path) => path,
@@ -108,7 +115,7 @@ impl SudokuGrid {
 
                 let mut solved_grids: Vec<ArrayGrid> = Vec::with_capacity(grids.len()); // A vec that we will put the solved grids into
 
-                // let start_solving = Date::now(); // Get the current time
+                let start_solving = Instant::now(); // Get the current time
 
                 for grid_to_solve in grids.iter() {
                     // For each grid we have to solve
@@ -130,6 +137,13 @@ impl SudokuGrid {
                     // Add the grid we just solved to our array of solved grids
                     solved_grids.push(ArrayGrid(result));
 
+                    // Update the progress bar. For now, there is no async support, so the
+                    // rendering will be blocked during solving and the progress bar will not be
+                    // updated
+                    self.json_progress = (grids.iter().count() as f32
+                        / solved_grids.iter().count() as f32)
+                        * 100 as f32;
+
                     println!(
                         "Just solved grid {} out of {}",
                         &solved_grids.iter().count(),
@@ -137,12 +151,45 @@ impl SudokuGrid {
                     );
                 }
 
-                // let solving_duration = Date::now() - start_solving; // Calculate the total time we spent solving
-                // let total_duration = Date::now() - start_total; // Calculate the total time with parsing
+                let solving_duration = start_solving.elapsed().as_millis(); // Calculate the total time we spent solving. We do not use as_secs here as it only return full integers
+                let total_duration = start_total.elapsed().as_millis(); // Calculate the total time with parsing
 
-                // let avg_duration = solving_duration / solved_grids.len() as f64; // Calculate the average time it took per grid
+                let avg_duration = solving_duration / solved_grids.len() as u128; // Calculate the average time it took per grid
 
-                println!("Solved grids : {:?}", solved_grids);
+                self.json_result = Some(format!(
+                    "
+                    Number of grids : {}.
+                    Time spent in total (with json parsing ect...) : {}s.
+                    Time spent actually solving the grids : {}s.
+                    Average time per grid : {}ms.
+                ",
+                    &solved_grids.iter().count(),
+                    solving_duration / 1000,
+                    total_duration / 1000,
+                    avg_duration
+                ));
+
+                // Create json object of the output
+                let output = serde_json::json!(solved_grids);
+
+                // Create dialog for storing the output file
+                let file_path = FileDialog::new()
+                    .add_filter("JSON", &["json"])
+                    .set_file_name("solved_grids.json")
+                    .save_file();
+
+                if let Some(path) = file_path {
+                    match serde_json::to_string_pretty(&output) {
+                        Ok(json) => {
+                            if let Err(e) = std::fs::write(&path, json) {
+                                self.error = Some(format!("Failed to save: {}", e));
+                            }
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("Failed to serialize: {}", e));
+                        }
+                    }
+                }
             }
         }
     }
@@ -209,6 +256,23 @@ impl SudokuGrid {
         })
         .style(text::danger);
 
-        column![error_display, grid, buttons, load_json_button].into()
+        let json_progress_bar: ProgressBar = progress_bar(0.0..=100.0, self.json_progress).into();
+
+        let json_results_display: Text = text({
+            match &self.json_result {
+                Some(r) => r.as_str(),
+                None => "",
+            }
+        });
+
+        scrollable(column![
+            error_display,
+            grid,
+            buttons,
+            load_json_button,
+            json_progress_bar,
+            json_results_display
+        ])
+        .into()
     }
 }
