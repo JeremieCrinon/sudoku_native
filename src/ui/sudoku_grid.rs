@@ -9,6 +9,7 @@ use iced::{
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use tokio;
 
 #[derive(Default)]
 pub struct SudokuGrid {
@@ -18,7 +19,7 @@ pub struct SudokuGrid {
     json_progress: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct ArrayGrid([[u8; 9]; 9]);
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,41 @@ pub enum SudokuMessage {
     Solve,
     Reset,
     LoadJson,
+}
+
+async fn handle_solving(grid_to_solve: ArrayGrid) -> ArrayGrid {
+    // We make a new grid object, this object will be easier to manipulate than if we used the 2D array directly
+    let mut grid = Grid::new();
+
+    // We call the function fill_grid from /sudoku/fill.rs with the grid object, and the grid_to_solve that the JS gave us
+    grid = fill_grid(grid, grid_to_solve.0);
+
+    // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
+    let (grid, success) = solve_grid(grid);
+
+    // If success, we make result the grid object that we turned back into an array, else, we return an empty grid, the JS will then know that the grid isn't correct
+    let result = if success {
+        grid.to_array()
+    } else {
+        [[0; 9]; 9]
+    };
+
+    ArrayGrid(result)
+
+    // // Add the grid we just solved to our array of solved grids
+    // solved_grids.push(ArrayGrid(result));
+    //
+    // // Update the progress bar. For now, there is no async support, so the
+    // // rendering will be blocked during solving and the progress bar will not be
+    // // updated
+    // self.json_progress =
+    //     (grids.iter().count() as f32 / solved_grids.iter().count() as f32) * 100 as f32;
+    //
+    // println!(
+    //     "Just solved grid {} out of {}",
+    //     &solved_grids.iter().count(),
+    //     &grids.iter().count()
+    // );
 }
 
 impl SudokuGrid {
@@ -117,79 +153,91 @@ impl SudokuGrid {
 
                 let start_solving = Instant::now(); // Get the current time
 
-                for grid_to_solve in grids.iter() {
-                    // For each grid we have to solve
-                    // We make a new grid object, this object will be easier to manipulate than if we used the 2D array directly
-                    let mut grid = Grid::new();
-                    // We call the function fill_grid from ./sudoku/fill.rs with the grid object, and the grid_to_solve that the JS gave us
-                    grid = fill_grid(grid, grid_to_solve.0);
+                let solves: Vec<_> = grids
+                    .iter()
+                    .map(|grid| {
+                        let grid = grid.clone();
 
-                    // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
-                    let (grid, success) = solve_grid(grid);
+                        tokio::spawn(async move {
+                            handle_solving(grid).await;
+                            println!("Just solved a grid");
+                        })
+                    })
+                    .collect();
 
-                    // If success, we make result the grid object that we turned back into an array, else, we return an empty grid, the JS will then know that the grid isn't correct
-                    let result = if success {
-                        grid.to_array()
-                    } else {
-                        [[0; 9]; 9]
-                    };
+                // for grid_to_solve in grids.iter() {
+                //     // For each grid we have to solve
+                //     // We make a new grid object, this object will be easier to manipulate than if we used the 2D array directly
+                //     let mut grid = Grid::new();
+                //     // We call the function fill_grid from ./sudoku/fill.rs with the grid object, and the grid_to_solve that the JS gave us
+                //     grid = fill_grid(grid, grid_to_solve.0);
+                //
+                //     // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
+                //     let (grid, success) = solve_grid(grid);
+                //
+                //     // If success, we make result the grid object that we turned back into an array, else, we return an empty grid, the JS will then know that the grid isn't correct
+                //     let result = if success {
+                //         grid.to_array()
+                //     } else {
+                //         [[0; 9]; 9]
+                //     };
+                //
+                //     // Add the grid we just solved to our array of solved grids
+                //     solved_grids.push(ArrayGrid(result));
+                //
+                //     // Update the progress bar. For now, there is no async support, so the
+                //     // rendering will be blocked during solving and the progress bar will not be
+                //     // updated
+                //     self.json_progress = (grids.iter().count() as f32
+                //         / solved_grids.iter().count() as f32)
+                //         * 100 as f32;
+                //
+                //     println!(
+                //         "Just solved grid {} out of {}",
+                //         &solved_grids.iter().count(),
+                //         &grids.iter().count()
+                //     );
+                // }
 
-                    // Add the grid we just solved to our array of solved grids
-                    solved_grids.push(ArrayGrid(result));
-
-                    // Update the progress bar. For now, there is no async support, so the
-                    // rendering will be blocked during solving and the progress bar will not be
-                    // updated
-                    self.json_progress = (grids.iter().count() as f32
-                        / solved_grids.iter().count() as f32)
-                        * 100 as f32;
-
-                    println!(
-                        "Just solved grid {} out of {}",
-                        &solved_grids.iter().count(),
-                        &grids.iter().count()
-                    );
-                }
-
-                let solving_duration = start_solving.elapsed().as_millis(); // Calculate the total time we spent solving. We do not use as_secs here as it only return full integers
-                let total_duration = start_total.elapsed().as_millis(); // Calculate the total time with parsing
-
-                let avg_duration = solving_duration / solved_grids.len() as u128; // Calculate the average time it took per grid
-
-                self.json_result = Some(format!(
-                    "
-                    Number of grids : {}.
-                    Time spent in total (with json parsing ect...) : {}s.
-                    Time spent actually solving the grids : {}s.
-                    Average time per grid : {}ms.
-                ",
-                    &solved_grids.iter().count(),
-                    solving_duration / 1000,
-                    total_duration / 1000,
-                    avg_duration
-                ));
-
-                // Create json object of the output
-                let output = serde_json::json!(solved_grids);
-
-                // Create dialog for storing the output file
-                let file_path = FileDialog::new()
-                    .add_filter("JSON", &["json"])
-                    .set_file_name("solved_grids.json")
-                    .save_file();
-
-                if let Some(path) = file_path {
-                    match serde_json::to_string_pretty(&output) {
-                        Ok(json) => {
-                            if let Err(e) = std::fs::write(&path, json) {
-                                self.error = Some(format!("Failed to save: {}", e));
-                            }
-                        }
-                        Err(e) => {
-                            self.error = Some(format!("Failed to serialize: {}", e));
-                        }
-                    }
-                }
+                // let solving_duration = start_solving.elapsed().as_millis(); // Calculate the total time we spent solving. We do not use as_secs here as it only return full integers
+                // let total_duration = start_total.elapsed().as_millis(); // Calculate the total time with parsing
+                //
+                // let avg_duration = solving_duration / solved_grids.len() as u128; // Calculate the average time it took per grid
+                //
+                // self.json_result = Some(format!(
+                //     "
+                //     Number of grids : {}.
+                //     Time spent in total (with json parsing ect...) : {}s.
+                //     Time spent actually solving the grids : {}s.
+                //     Average time per grid : {}ms.
+                // ",
+                //     &solved_grids.iter().count(),
+                //     solving_duration / 1000,
+                //     total_duration / 1000,
+                //     avg_duration
+                // ));
+                //
+                // // Create json object of the output
+                // let output = serde_json::json!(solved_grids);
+                //
+                // // Create dialog for storing the output file
+                // let file_path = FileDialog::new()
+                //     .add_filter("JSON", &["json"])
+                //     .set_file_name("solved_grids.json")
+                //     .save_file();
+                //
+                // if let Some(path) = file_path {
+                //     match serde_json::to_string_pretty(&output) {
+                //         Ok(json) => {
+                //             if let Err(e) = std::fs::write(&path, json) {
+                //                 self.error = Some(format!("Failed to save: {}", e));
+                //             }
+                //         }
+                //         Err(e) => {
+                //             self.error = Some(format!("Failed to serialize: {}", e));
+                //         }
+                //     }
+                // }
             }
         }
     }

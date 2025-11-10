@@ -2,21 +2,21 @@ use crate::resolver::grid; // The grid struct from ./grid.rs
 use std::collections::HashSet;
 
 // This function gets a 1D array, and returns a boolean to tell wether or not there is duplicates
-fn check_array_dupes (array: &[u8]) -> bool {
+fn check_array_dupes(array: &[u8]) -> bool {
     let mut seen = HashSet::new();
     for &value in array.iter() {
         if value != 0 && !seen.insert(value) {
-            return false;  // Found a duplicate
+            return false; // Found a duplicate
         }
     }
 
-    true  // No duplicates
+    true // No duplicates
 }
 
 // Gets a row and tells if it is valid (does not have twice the same number)
-fn is_row_valid (grid: &grid::Grid, row_num: usize) -> bool {
+fn is_row_valid(grid: &grid::Grid, row_num: usize) -> bool {
     // We make a row variable that is a 1D array containing 9 u8
-    let mut row: [u8; 9] = [0; 9]; 
+    let mut row: [u8; 9] = [0; 9];
     // For each cell (column) of the row
     for col in 0..9 {
         // We set the value of the row array to the value in the grid
@@ -28,7 +28,7 @@ fn is_row_valid (grid: &grid::Grid, row_num: usize) -> bool {
 }
 
 // Same as is_row_valid
-fn is_col_valid (grid: &grid::Grid, col_num: usize) -> bool {
+fn is_col_valid(grid: &grid::Grid, col_num: usize) -> bool {
     let mut col: [u8; 9] = [0; 9];
     for row in 0..9 {
         col[row] = grid.get(row, col_num);
@@ -38,7 +38,7 @@ fn is_col_valid (grid: &grid::Grid, col_num: usize) -> bool {
 }
 
 // Gets a square, and tells if it is valid (does not have twice the same number)
-fn is_square_valid (grid: &grid::Grid, row_off: usize, col_off: usize) -> bool {
+fn is_square_valid(grid: &grid::Grid, row_off: usize, col_off: usize) -> bool {
     // A 1D array representing the square
     let mut square: [u8; 9] = [0; 9];
     // The index to set a value in the square idex
@@ -58,7 +58,7 @@ fn is_square_valid (grid: &grid::Grid, row_off: usize, col_off: usize) -> bool {
 }
 
 // This functions gets the grid and tells if it is valid (does not have any duplicates in any row, col and square)
-fn check_grid (grid: &grid::Grid) -> bool {
+fn check_grid(grid: &grid::Grid) -> bool {
     // For each of the rows and cols
     for i in 0..9 {
         // If the row or column isn't valid (has twice or more the same number)...
@@ -84,7 +84,7 @@ fn check_grid (grid: &grid::Grid) -> bool {
 }
 
 // Gets the first empty cell
-fn get_first_element (grid: &grid::Grid) -> (usize, usize) {
+fn get_first_element(grid: &grid::Grid) -> (usize, usize) {
     // We go trough all of the cells
     for i in 0..9 {
         for j in 0..9 {
@@ -101,7 +101,7 @@ fn get_first_element (grid: &grid::Grid) -> (usize, usize) {
 }
 
 // This is the function to solve the grid, it gets a Grid object, and return a Grid object plus a boolean, true if the grid is valid, false if it ain't
-pub fn solve_grid (mut grid: grid::Grid) -> (grid::Grid, bool) {
+pub fn solve_grid(mut grid: grid::Grid) -> (grid::Grid, bool) {
     // We get the coordinates of the first empty element in the grid
     let (row, col) = get_first_element(&grid);
 
