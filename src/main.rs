@@ -1,11 +1,9 @@
-use ui::SudokuGrid;
-
 mod resolver;
 mod ui;
 
-#[tokio::main]
-async fn main() -> iced::Result {
-    iced::application("Sudoku native", SudokuGrid::update, SudokuGrid::view)
-        .theme(|_| iced::Theme::Dark)
-        .run()
+use ui::SudokuGrid;
+
+fn main() -> iced::Result {
+    iced::application("Sudoku Native", SudokuGrid::update, SudokuGrid::view)
+        .run_with(|| SudokuGrid::new())
 }
