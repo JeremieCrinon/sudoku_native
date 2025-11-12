@@ -1,11 +1,9 @@
-// use resolver::{Grid, fill_grid, solve_grid};
-use ui::SudokuGrid;
-
 mod resolver;
 mod ui;
 
+use ui::SudokuGrid;
+
 fn main() -> iced::Result {
-    iced::application("Sudoku native", SudokuGrid::update, SudokuGrid::view)
-        .theme(|_| iced::Theme::Dark)
-        .run()
+    iced::application("Sudoku Native", SudokuGrid::update, SudokuGrid::view)
+        .run_with(|| SudokuGrid::new())
 }

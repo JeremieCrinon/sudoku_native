@@ -1,16 +1,15 @@
 use crate::resolver::{Grid, fill_grid, solve_grid};
 use iced::{
-    Element, Pixels,
+    Element, Pixels, Task,
     widget::{
-        Column, Container, ProgressBar, Row, Text, button, column, container, progress_bar, row,
-        scrollable, text, text_input,
+        Column, Container, Row, Text, button, column, container, row, scrollable, text, text_input,
     },
 };
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio;
 
-#[derive(Default)]
 pub struct SudokuGrid {
     value: Grid,
     error: Option<String>,
@@ -18,19 +17,62 @@ pub struct SudokuGrid {
     json_progress: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct ArrayGrid([[u8; 9]; 9]);
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ArrayGrid([[u8; 9]; 9]);
 
 #[derive(Debug, Clone)]
 pub enum SudokuMessage {
-    InputChanged { x: usize, y: usize, value: String },
+    InputChanged {
+        x: usize,
+        y: usize,
+        value: String,
+    },
     Solve,
     Reset,
     LoadJson,
+    JsonFinished {
+        solved_grids: Vec<ArrayGrid>,
+        duration: Duration,
+    },
+    JsonError {
+        error: String,
+    },
+}
+
+async fn handle_solving(grid_to_solve: ArrayGrid) -> ArrayGrid {
+    // We make a new grid object, this object will be easier to manipulate than if we used the 2D array directly
+    let mut grid = Grid::new();
+
+    // We call the function fill_grid from /sudoku/fill.rs with the grid object, and the grid_to_solve that the JS gave us
+    grid = fill_grid(grid, grid_to_solve.0);
+
+    // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
+    let (grid, success) = solve_grid(grid);
+
+    // If success, we make result the grid object that we turned back into an array, else, we return an empty grid, the JS will then know that the grid isn't correct
+    let result = if success {
+        grid.to_array()
+    } else {
+        [[0; 9]; 9]
+    };
+
+    ArrayGrid(result)
 }
 
 impl SudokuGrid {
-    pub fn update(&mut self, message: SudokuMessage) {
+    pub fn new() -> (Self, Task<SudokuMessage>) {
+        (
+            SudokuGrid {
+                value: Grid::new(),
+                error: None,
+                json_result: None,
+                json_progress: 0.0 as f32,
+            },
+            Task::none(),
+        )
+    }
+
+    pub fn update(&mut self, message: SudokuMessage) -> Task<SudokuMessage> {
         // Reset the error when there is an update, as it will not be relevent anymore
         self.error = None;
 
@@ -53,6 +95,8 @@ impl SudokuGrid {
                 } else {
                     self.value.set(x, y, 0);
                 }
+
+                Task::none()
             }
             SudokuMessage::Solve => {
                 // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
@@ -63,133 +107,131 @@ impl SudokuGrid {
                 } else {
                     self.error = Some("The grid is not solvable".to_string());
                 }
+
+                Task::none()
             }
             SudokuMessage::Reset => {
                 self.value = Grid::new();
+                Task::none()
             }
             SudokuMessage::LoadJson => {
-                self.json_result = None; // Reset the json resolving results
+                self.json_result = Some("Solving, please wait...".to_string()); // Reset the json resolving results
                 self.json_progress = 0.0; // Set the progress bar back to 0
 
-                let file_path = FileDialog::new()
-                    .add_filter("text", &["json"])
-                    .set_directory("/")
-                    .pick_file();
+                // Use Task::perform to run async work
+                Task::perform(
+                    async {
+                        let file_path = FileDialog::new()
+                            .add_filter("text", &["json"])
+                            .set_directory("/")
+                            .pick_file();
 
-                let start_total = Instant::now(); // Get the current time (for calculating how much time it took)
+                        let start_total = Instant::now(); // Get the current time (for calculating how much time it took)
 
-                let file_path = match file_path {
-                    Some(path) => path,
-                    None => {
-                        self.error = Some("No file selected".to_string());
-                        return;
-                    }
-                };
+                        let file_path = match file_path {
+                            Some(path) => path,
+                            None => {
+                                return Err("No file selected".to_string());
+                            }
+                        };
 
-                // Read the file content as bytes
-                let file_content = match std::fs::read(&file_path) {
-                    Ok(content) => content,
-                    Err(_) => {
-                        self.error = Some("Failed to read file".to_string());
-                        return;
-                    }
-                };
+                        // Read the file content as bytes
+                        let file_content = match std::fs::read(&file_path) {
+                            Ok(content) => content,
+                            Err(_) => {
+                                return Err("Failed to read file".to_string());
+                            }
+                        };
 
-                // Parse as UTF-8 string
-                let file_str = match std::str::from_utf8(&file_content) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        self.error = Some("File is not valid UTF-8".to_string());
-                        return;
-                    }
-                };
+                        // Parse as UTF-8 string
+                        let file_str = match std::str::from_utf8(&file_content) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                return Err("File is not valid UTF-8".to_string());
+                            }
+                        };
 
-                // Parse JSON
-                let grids: Vec<ArrayGrid> = match serde_json::from_str(file_str) {
-                    Ok(grids) => grids,
-                    Err(_) => {
-                        self.error = Some("The file is not valid JSON".to_string());
-                        return;
-                    }
-                };
+                        // Parse JSON
+                        let grids: Vec<ArrayGrid> = match serde_json::from_str(file_str) {
+                            Ok(grids) => grids,
+                            Err(_) => {
+                                return Err("The file is not valid JSON".to_string());
+                            }
+                        };
 
-                let mut solved_grids: Vec<ArrayGrid> = Vec::with_capacity(grids.len()); // A vec that we will put the solved grids into
+                        // Spawn all solving tasks
+                        let solves: Vec<_> = grids
+                            .iter()
+                            .map(|grid| {
+                                let grid = grid.clone();
+                                tokio::spawn(async move { handle_solving(grid).await })
+                            })
+                            .collect();
 
-                let start_solving = Instant::now(); // Get the current time
+                        // Wait for all tasks to complete and collect results
+                        let mut solved_grids: Vec<ArrayGrid> = Vec::with_capacity(grids.len());
+                        for handle in solves {
+                            match handle.await {
+                                Ok(solved_grid) => solved_grids.push(solved_grid),
+                                Err(e) => eprintln!("Task failed: {:?}", e),
+                            }
+                        }
 
-                for grid_to_solve in grids.iter() {
-                    // For each grid we have to solve
-                    // We make a new grid object, this object will be easier to manipulate than if we used the 2D array directly
-                    let mut grid = Grid::new();
-                    // We call the function fill_grid from ./sudoku/fill.rs with the grid object, and the grid_to_solve that the JS gave us
-                    grid = fill_grid(grid, grid_to_solve.0);
+                        let duration = start_total.elapsed();
 
-                    // We call the solve_grid function, it returns two elements, the solved grid if it can be solved, and success (true = the grid has been solved and is correct, false = the grid cannot be solved and isn't correct)
-                    let (grid, success) = solve_grid(grid);
-
-                    // If success, we make result the grid object that we turned back into an array, else, we return an empty grid, the JS will then know that the grid isn't correct
-                    let result = if success {
-                        grid.to_array()
-                    } else {
-                        [[0; 9]; 9]
-                    };
-
-                    // Add the grid we just solved to our array of solved grids
-                    solved_grids.push(ArrayGrid(result));
-
-                    // Update the progress bar. For now, there is no async support, so the
-                    // rendering will be blocked during solving and the progress bar will not be
-                    // updated
-                    self.json_progress = (grids.iter().count() as f32
-                        / solved_grids.iter().count() as f32)
-                        * 100 as f32;
-
-                    println!(
-                        "Just solved grid {} out of {}",
-                        &solved_grids.iter().count(),
-                        &grids.iter().count()
-                    );
-                }
-
-                let solving_duration = start_solving.elapsed().as_millis(); // Calculate the total time we spent solving. We do not use as_secs here as it only return full integers
-                let total_duration = start_total.elapsed().as_millis(); // Calculate the total time with parsing
-
-                let avg_duration = solving_duration / solved_grids.len() as u128; // Calculate the average time it took per grid
-
-                self.json_result = Some(format!(
-                    "
-                    Number of grids : {}.
-                    Time spent in total (with json parsing ect...) : {}s.
-                    Time spent actually solving the grids : {}s.
-                    Average time per grid : {}ms.
-                ",
-                    &solved_grids.iter().count(),
-                    solving_duration / 1000,
-                    total_duration / 1000,
-                    avg_duration
-                ));
-
-                // Create json object of the output
-                let output = serde_json::json!(solved_grids);
-
-                // Create dialog for storing the output file
-                let file_path = FileDialog::new()
+                        Ok((solved_grids, duration))
+                    },
+                    |result| match result {
+                        Ok((solved_grids, duration)) => SudokuMessage::JsonFinished {
+                            solved_grids,
+                            duration,
+                        },
+                        Err(error) => SudokuMessage::JsonError { error: error },
+                    },
+                )
+            }
+            SudokuMessage::JsonFinished {
+                solved_grids,
+                duration,
+            } => {
+                // Ask user where to save the file
+                let save_path = FileDialog::new()
                     .add_filter("JSON", &["json"])
                     .set_file_name("solved_grids.json")
                     .save_file();
 
-                if let Some(path) = file_path {
-                    match serde_json::to_string_pretty(&output) {
-                        Ok(json) => {
-                            if let Err(e) = std::fs::write(&path, json) {
-                                self.error = Some(format!("Failed to save: {}", e));
+                if let Some(path) = save_path {
+                    // Serialize and save the solved grids
+                    match serde_json::to_string_pretty(&solved_grids) {
+                        Ok(json_string) => match std::fs::write(&path, json_string) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                self.error = Some(format!("Failed to save file: {}", e));
                             }
-                        }
+                        },
                         Err(e) => {
-                            self.error = Some(format!("Failed to serialize: {}", e));
+                            self.error = Some(format!("Failed to serialize results: {}", e));
                         }
                     }
                 }
+
+                self.json_result = Some(format!(
+                    "
+                    Number of grids : {}.
+                    Time spent : {:.2?},
+                    Average time per grid : {:.2?}
+                    ",
+                    solved_grids.len(),
+                    duration,
+                    duration / solved_grids.len() as u32
+                ));
+
+                Task::none()
+            }
+            SudokuMessage::JsonError { error } => {
+                self.error = Some(error);
+
+                Task::none()
             }
         }
     }
@@ -256,8 +298,6 @@ impl SudokuGrid {
         })
         .style(text::danger);
 
-        let json_progress_bar: ProgressBar = progress_bar(0.0..=100.0, self.json_progress).into();
-
         let json_results_display: Text = text({
             match &self.json_result {
                 Some(r) => r.as_str(),
@@ -270,7 +310,6 @@ impl SudokuGrid {
             grid,
             buttons,
             load_json_button,
-            json_progress_bar,
             json_results_display
         ])
         .into()
