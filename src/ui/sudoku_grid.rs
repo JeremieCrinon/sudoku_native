@@ -2,8 +2,7 @@ use crate::resolver::{Grid, fill_grid, solve_grid};
 use iced::{
     Element, Pixels, Task,
     widget::{
-        Column, Container, ProgressBar, Row, Text, button, column, container, progress_bar, row,
-        scrollable, text, text_input,
+        Column, Container, Row, Text, button, column, container, row, scrollable, text, text_input,
     },
 };
 use rfd::FileDialog;
@@ -116,7 +115,7 @@ impl SudokuGrid {
                 Task::none()
             }
             SudokuMessage::LoadJson => {
-                self.json_result = None; // Reset the json resolving results
+                self.json_result = Some("Solving, please wait...".to_string()); // Reset the json resolving results
                 self.json_progress = 0.0; // Set the progress bar back to 0
 
                 // Use Task::perform to run async work
@@ -205,18 +204,7 @@ impl SudokuGrid {
                     // Serialize and save the solved grids
                     match serde_json::to_string_pretty(&solved_grids) {
                         Ok(json_string) => match std::fs::write(&path, json_string) {
-                            Ok(_) => {
-                                // self.json_result = Some(format!(
-                                //     "
-                                //     Number of grids : {}.
-                                //     Time spent : {:.2?},
-                                //     Average time per grid : {:.2?}
-                                //     ",
-                                //     solved_grids.len(),
-                                //     duration,
-                                //     duration / solved_grids.len() as u32
-                                // ));
-                            }
+                            Ok(_) => {}
                             Err(e) => {
                                 self.error = Some(format!("Failed to save file: {}", e));
                             }
@@ -310,8 +298,6 @@ impl SudokuGrid {
         })
         .style(text::danger);
 
-        let json_progress_bar: ProgressBar = progress_bar(0.0..=100.0, self.json_progress).into();
-
         let json_results_display: Text = text({
             match &self.json_result {
                 Some(r) => r.as_str(),
@@ -324,7 +310,6 @@ impl SudokuGrid {
             grid,
             buttons,
             load_json_button,
-            json_progress_bar,
             json_results_display
         ])
         .into()
